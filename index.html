@@ -80,7 +80,7 @@ const subscaleMap = {"Deambulación":[2,3,4,6,7,8,12,13],"Dolor":[1,5,11,15,16],
 
 let state = {
   view:"form", resp:{}, eva:null,
-  pac:{nombre:"",rut:"",edad:"",fecha:new Date().toISOString().slice(0,10),pie:"Derecho"},
+  pac:{nombre:"",rut:"",edad:"",fecha:new Date().toISOString().slice(0,10),pie:"Derecho",comentarios:""},
   showResults:false, registros:[], loading:false, saving:false,
   error:null, deleteConfirm:null, repoLoaded:false
 };
@@ -232,7 +232,7 @@ async function handleSave(goRepo) {
     if(json.ok) {
       showToast("✅ Guardado en Google Sheets");
       setState({saving:false,showResults:false,repoLoaded:false,resp:{},eva:null,
-        pac:{nombre:"",rut:"",edad:"",fecha:new Date().toISOString().slice(0,10),pie:"Derecho"}});
+        pac:{nombre:"",rut:"",edad:"",fecha:new Date().toISOString().slice(0,10),pie:"Derecho",comentarios:""}});
       if(goRepo) setState({view:"repo"});
     } else { showToast("❌ "+json.error,"#ef4444"); setState({saving:false}); }
   } catch(e) { showToast("❌ Error de conexión","#ef4444"); setState({saving:false}); }
@@ -262,8 +262,7 @@ function render() {
   html += `<div style="background:linear-gradient(135deg,#1e3a5f,#2563eb);border-radius:14px;padding:18px 20px;margin-bottom:18px;color:#fff">
     <div style="display:flex;justify-content:space-between;align-items:flex-start">
       <div>
-        <div style="font-size:11px;letter-spacing:2px;opacity:.7;text-transform:uppercase">Trauma Ñuble SpA</div>
-        <div style="font-size:18px;font-weight:700;margin-top:2px">MOxFQ — Tobillo y Pie</div>
+        <div style="font-size:18px;font-weight:700">MOxFQ — Tobillo y Pie</div>
         <div style="font-size:12px;opacity:.8">Manchester-Oxford Foot Questionnaire + EVA</div>
       </div>
       <button onclick="setState({view:'repo'});if(!state.repoLoaded)loadRegistros()" style="padding:7px 14px;border-radius:8px;border:none;background:rgba(255,255,255,.2);color:#fff;font-weight:600;font-size:12px">📋 Repositorio</button>
@@ -282,6 +281,10 @@ function render() {
       <select onchange="state.pac.pie=this.value" style="padding:7px 10px;border-radius:8px;border:none;font-size:13px;background:rgba(255,255,255,.15);color:#fff">
         ${["Derecho","Izquierdo","Bilateral"].map(p=>`<option value="${p}" ${state.pac.pie===p?"selected":""}>${p}</option>`).join("")}
       </select>
+    </div>
+    <div style="margin-top:8px">
+      <textarea placeholder="Comentarios clínicos (opcional)..." oninput="state.pac.comentarios=this.value" rows="2"
+        style="width:100%;padding:7px 10px;border-radius:8px;border:none;font-size:13px;background:rgba(255,255,255,.15);color:#fff;resize:vertical;font-family:inherit">${state.pac.comentarios||""}</textarea>
     </div>
   </div>`;
 
@@ -403,7 +406,6 @@ function renderRepo(app) {
   let html = `<div style="max-width:1000px;margin:0 auto;padding:16px 12px">
     <div style="background:linear-gradient(135deg,#1e3a5f,#2563eb);border-radius:14px;padding:16px 20px;margin-bottom:18px;color:#fff;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
       <div>
-        <div style="font-size:11px;opacity:.7;letter-spacing:2px;text-transform:uppercase">Trauma Ñuble SpA</div>
         <div style="font-size:17px;font-weight:700">Repositorio MOxFQ</div>
         <div style="font-size:12px;opacity:.8">${state.loading?"Cargando...":state.registros.length+" evaluaciones en Google Sheets"}</div>
       </div>
