@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>MOxFQ — Trauma Ñuble SpA</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',sans-serif;background:#f9fafb;min-height:100vh}
+.spinner{width:18px;height:18px;border:3px solid #e5e7eb;border-top:3px solid #2563eb;border-radius:50%;animation:spin 0.7s linear infinite;display:inline-block;vertical-align:middle}
+@keyframes spin{to{transform:rotate(360deg)}}
+.toast{position:fixed;top:16px;right:16px;z-index:999;padding:10px 18px;border-radius:10px;font-weight:700;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.15);color:#fff;display:none}
+button{cursor:pointer}
+input,select{outline:none}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+const API = "https://script.google.com/macros/s/AKfycbx2GH2s_u-f5V2XF9e9CwsN73IKdqLbugzz22QXZmHB-fufNX4Q4t2HGTIbOEGIUaWe0Q/exec";
+
+function apiCall(params) {
+  return new Promise((resolve, reject) => {
+    const cb = "cb_" + Date.now() + "_" + Math.random().toString(36).slice(2);
+    const qs = Object.entries(params).map(([k,v]) => k+"="+encodeURIComponent(v)).join("&");
+    const script = document.createElement("script");
+    window[cb] = function(data) { resolve(data); delete window[cb]; script.remove(); };
+    script.onerror = function() { reject(new Error("Error de conexión")); delete window[cb]; script.remove(); };
+    script.src = API + "?" + qs + "&callback=" + cb;
+    document.head.appendChild(script);
+  });
+}
+
+function showToast(msg, color) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.style.background = color || "#10b981";
+  t.style.display = "block";
+  setTimeout(() => t.style.display = "none", 3000);
+}
+
+function formatRut(v) {
+  v = v.replace(/[^0-9kK]/g,"").toUpperCase();
+  if (v.length < 2) return v;
+  const body = v.slice(0,-1), dv = v.slice(-1);
+  return body.replace(/\B(?=(\d{3})+(?!\d))/g,".") + "-" + dv;
+}
+
+const ESFERAS_COLOR = {DOLOR:"#ef4444",PIE:"#3b82f6",SOCIAL:"#8b5cf6",MEJORIA:"#10b981",EVA:"#f59e0b"};
+const preguntas = [
+  {id:1,esfera:"DOLOR",texto:"He tenido dolor en mi pie o tobillo",tipo:"freq"},
+  {id:2,esfera:"PIE",texto:"He evitado caminar largas distancias debido al dolor en mi pie o tobillo",tipo:"freq"},
+  {id:3,esfera:"PIE",texto:"He cambiado la manera de caminar debido al dolor en mi pie o tobillo",tipo:"freq"},
+  {id:4,esfera:"PIE",texto:"He caminado lentamente debido al dolor en mi pie o tobillo",tipo:"freq"},
+  {id:5,esfera:"DOLOR",texto:"He tenido que parar y descansar mi pie o tobillo por dolor",tipo:"freq"},
+  {id:6,esfera:"PIE",texto:"He evitado superficies duras o irregulares debido al dolor en mi pie o tobillo",tipo:"freq"},
+  {id:7,esfera:"PIE",texto:"He evitado estar de pie durante un periodo largo por dolor en mi pie o tobillo",tipo:"freq"},
+  {id:8,esfera:"DOLOR",texto:"He cogido el autobús o el coche en vez de caminar, debido al dolor en mi pie o tobillo",tipo:"freq"},
+  {id:9,esfera:"SOCIAL",texto:"Me he sentido acomplejado por mi pie o tobillo",tipo:"freq"},
+  {id:10,esfera:"SOCIAL",texto:"Me he sentido acomplejado por el calzado que debo llevar",tipo:"freq"},
+  {id:11,esfera:"DOLOR",texto:"El dolor en mi pie o tobillo ha sido mayor al final del día",tipo:"freq"},
+  {id:12,esfera:"PIE",texto:"He tenido un dolor punzante en mi pie o tobillo",tipo:"freq"},
+  {id:13,esfera:"PIE",texto:"El dolor en mi pie/tobillo me ha impedido realizar mi trabajo o actividades habituales",tipo:"freq"},
+  {id:14,esfera:"SOCIAL",texto:"Soy incapaz de realizar mis actividades sociales o de tiempo libre debido al dolor en mi pie o tobillo",tipo:"freq"},
+  {id:15,esfera:"DOLOR",texto:"¿Cómo describiría el dolor que ha tenido en su pie o tobillo?",tipo:"dolor"},
+  {id:16,esfera:"DOLOR",texto:"¿Le ha molestado el dolor de su pie o tobillo por la noche estando en la cama?",tipo:"noche"},
+  {id:17,esfera:"MEJORIA",texto:"¿Los problemas relacionados con su pie han mejorado respecto a antes de operarse?",tipo:"mejoria"},
+  {id:18,esfera:"EVA",texto:"Escala de dolor EVA",tipo:"eva"}
+];
+const opciones = {
+  freq:[{l:"Nunca",v:0},{l:"Raras veces",v:1},{l:"Algunas veces",v:2},{l:"La mayoría de las veces",v:3},{l:"Siempre",v:4}],
+  dolor:[{l:"Ninguno",v:0},{l:"Muy leve",v:1},{l:"Leve",v:2},{l:"Moderado",v:3},{l:"Intenso",v:4}],
+  noche:[{l:"Ninguna noche",v:0},{l:"1 o 2 noches",v:1},{l:"Algunas noches",v:2},{l:"La mayoría de las noches",v:3},{l:"Cada noche",v:4}],
+  mejoria:[{l:"No tengo problema",v:0},{l:"Están mucho mejor",v:1},{l:"Ligeramente mejor",v:2},{l:"Sin cambios",v:3},{l:"Ligeramente peor",v:4},{l:"Están mucho peor",v:5}]
+};
+const subscaleMap = {"Deambulación":[2,3,4,6,7,8,12,13],"Dolor":[1,5,11,15,16],"Social":[9,10,14]};
+
+let state = {
+  view:"form", resp:{}, eva:null,
+  pac:{nombre:"",rut:"",edad:"",fecha:new Date().toISOString().slice(0,10),pie:"Derecho"},
+  showResults:false, registros:[], loading:false, saving:false,
+  error:null, deleteConfirm:null, repoLoaded:false
+};
+
+function calcScore(r) {
+  const s={};
+  for(const [name,ids] of Object.entries(subscaleMap)){
+    const vals=ids.map(id=>r[id]!=null?r[id]:null).filter(v=>v!==null);
+    s[name]=vals.length?Math.round((vals.reduce((a,b)=>a+b,0)/(ids.length*4))*100):null;
+  }
+  return s;
+}
+
+function setState(patch) { Object.assign(state, patch); render(); }
+
+function exportCSV(registros) {
+  if(!registros.length) return;
+  const keys=Object.keys(registros[0]);
+  const csv=[keys,...registros.map(r=>keys.map(k=>`"${String(r[k]??"").replace(/"/g,'""')}"`))].map(r=>r.join(",")).join("\n");
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8;"}));
+  a.download="MOxFQ_"+new Date().toISOString().slice(0,10)+".csv"; a.click();
+}
+
+async function loadRegistros() {
+  setState({loading:true,error:null});
+  try {
+    const json = await apiCall({action:"list"});
+    if(json.ok) setState({registros:json.data,repoLoaded:true,loading:false});
+    else setState({error:json.error,loading:false});
+  } catch(e) { setState({error:"Error de conexión con Google Sheets",loading:false}); }
+}
+
+async function handleSave(goRepo) {
+  setState({saving:true});
+  const scores = calcScore(state.resp);
+  const moxfqGlobal = Object.values(scores).every(v=>v!==null) ? Math.round((scores["Deambulación"]+scores["Dolor"]+scores["Social"])/3) : null;
+  try {
+    const payload = {...state.pac, scores, moxfqGlobal, eva:state.eva, resp:state.resp};
+    const json = await apiCall({action:"save", data:JSON.stringify(payload)});
+    if(json.ok) {
+      showToast("✅ Guardado en Google Sheets");
+      setState({saving:false,showResults:false,repoLoaded:false,resp:{},eva:null,
+        pac:{nombre:"",rut:"",edad:"",fecha:new Date().toISOString().slice(0,10),pie:"Derecho"}});
+      if(goRepo) setState({view:"repo"});
+    } else { showToast("❌ "+json.error,"#ef4444"); setState({saving:false}); }
+  } catch(e) { showToast("❌ Error de conexión","#ef4444"); setState({saving:false}); }
+}
+
+async function handleDelete(id) {
+  try {
+    await apiCall({action:"delete",id});
+    setState({registros:state.registros.filter(r=>String(r["ID"])!==String(id)),deleteConfirm:null});
+    showToast("🗑 Eliminado","#6b7280");
+  } catch { showToast("❌ Error al eliminar","#ef4444"); }
+}
+
+function render() {
+  const app = document.getElementById("app");
+  const scores = calcScore(state.resp);
+  const moxfqGlobal = Object.values(scores).every(v=>v!==null) ? Math.round((scores["Deambulación"]+scores["Dolor"]+scores["Social"])/3) : null;
+  const total = preguntas.length;
+  const answered = preguntas.filter(p=>p.tipo==="eva"?state.eva!==null:state.resp[p.id]!==undefined).length;
+  const pct = Math.round((answered/total)*100);
+
+  if(state.view==="repo") { renderRepo(app); return; }
+
+  let html = `<div style="max-width:680px;margin:0 auto;padding:16px 12px">`;
+
+  // Header
+  html += `<div style="background:linear-gradient(135deg,#1e3a5f,#2563eb);border-radius:14px;padding:18px 20px;margin-bottom:18px;color:#fff">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start">
+      <div>
+        <div style="font-size:11px;letter-spacing:2px;opacity:.7;text-transform:uppercase">Trauma Ñuble SpA</div>
+        <div style="font-size:18px;font-weight:700;margin-top:2px">MOxFQ — Tobillo y Pie</div>
+        <div style="font-size:12px;opacity:.8">Manchester-Oxford Foot Questionnaire + EVA</div>
+      </div>
+      <button onclick="setState({view:'repo'});if(!state.repoLoaded)loadRegistros()" style="padding:7px 14px;border-radius:8px;border:none;background:rgba(255,255,255,.2);color:#fff;font-weight:600;font-size:12px">📋 Repositorio</button>
+    </div>
+    <div style="margin-top:14px;display:grid;grid-template-columns:2fr 1fr 1fr;gap:8px">
+      <input placeholder="Nombre completo" value="${state.pac.nombre}" oninput="state.pac.nombre=this.value"
+        style="padding:7px 10px;border-radius:8px;border:none;font-size:13px;background:rgba(255,255,255,.15);color:#fff">
+      <input placeholder="RUT" value="${state.pac.rut}" oninput="state.pac.rut=formatRut(this.value);this.value=state.pac.rut"
+        style="padding:7px 10px;border-radius:8px;border:none;font-size:13px;background:rgba(255,255,255,.15);color:#fff;font-family:monospace">
+      <input placeholder="Edad" type="number" value="${state.pac.edad}" oninput="state.pac.edad=this.value"
+        style="padding:7px 10px;border-radius:8px;border:none;font-size:13px;background:rgba(255,255,255,.15);color:#fff">
+    </div>
+    <div style="margin-top:8px;display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <input type="date" value="${state.pac.fecha}" oninput="state.pac.fecha=this.value"
+        style="padding:7px 10px;border-radius:8px;border:none;font-size:13px;background:rgba(255,255,255,.15);color:#fff">
+      <select onchange="state.pac.pie=this.value" style="padding:7px 10px;border-radius:8px;border:none;font-size:13px;background:rgba(255,255,255,.15);color:#fff">
+        ${["Derecho","Izquierdo","Bilateral"].map(p=>`<option value="${p}" ${state.pac.pie===p?"selected":""}>${p}</option>`).join("")}
+      </select>
+    </div>
+  </div>`;
+
+  // Progress
+  html += `<div style="background:#fff;border-radius:10px;padding:10px 14px;margin-bottom:14px;box-shadow:0 1px 4px rgba(0,0,0,.07)">
+    <div style="display:flex;justify-content:space-between;font-size:12px;color:#6b7280;margin-bottom:5px">
+      <span>Progreso: ${answered}/${total}</span>
+      <span style="font-weight:700;color:${pct===100?"#10b981":"#2563eb"}">${pct}%</span>
+    </div>
+    <div style="background:#e5e7eb;border-radius:8px;height:8px">
+      <div style="width:${pct}%;background:${pct===100?"#10b981":"#2563eb"};border-radius:8px;height:8px;transition:width .3s"></div>
+    </div>
+  </div>`;
+
+  html += `<div style="background:#eff6ff;border-radius:10px;padding:9px 14px;margin-bottom:16px;font-size:12px;color:#1e40af;border-left:3px solid #2563eb">
+    <b>Instrucciones:</b> Preguntas 1–14 se refieren a las <b>últimas 4 semanas</b>.</div>`;
+
+  // Preguntas
+  preguntas.forEach(p => {
+    const ec = ESFERAS_COLOR[p.esfera]||"#6b7280";
+    const isAns = p.tipo==="eva"?state.eva!==null:state.resp[p.id]!==undefined;
+    const shadow = isAns?"0 0 0 2px #bbf7d0":"0 1px 4px rgba(0,0,0,.07)";
+    const opts = p.tipo==="eva"?null:opciones[p.tipo];
+    const prefijo = p.id<=14?`<span style="color:#9ca3af;font-size:12px">Últimas 4 semanas: </span>`:"";
+
+    let respHtml = "";
+    if(p.tipo==="eva") {
+      const ev = state.eva??5;
+      const dots = [...Array(11)].map((_,i)=>`<div onclick="state.eva=${i};render()" style="width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:${state.eva===i?700:400};cursor:pointer;background:${state.eva===i?"#f59e0b":"#f3f4f6"};color:${state.eva===i?"#fff":"#374151"}">${i}</div>`).join("");
+      respHtml = `<div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:#6b7280;margin-bottom:4px"><span>0 — Sin dolor</span><span>10 — Máximo dolor</span></div>
+        <input type="range" min="0" max="10" step="1" value="${ev}" oninput="state.eva=Number(this.value);render()" style="width:100%;accent-color:#f59e0b">
+        <div style="display:flex;justify-content:space-between;margin-top:4px">${dots}</div>
+        ${state.eva!==null?`<div style="margin-top:7px;font-size:13px;font-weight:700;color:#f59e0b">EVA: ${state.eva}/10</div>`:""}
+      </div>`;
+    } else {
+      respHtml = `<div style="display:flex;flex-wrap:wrap;gap:6px">`+opts.map(o=>{
+        const sel=state.resp[p.id]===o.v;
+        return `<button onclick="state.resp[${p.id}]=${o.v};render()" style="padding:5px 11px;border-radius:20px;border:1.5px solid ${sel?ec:"#e5e7eb"};background:${sel?ec:"#f9fafb"};color:${sel?"#fff":"#374151"};font-size:12px;font-weight:${sel?700:400}"><span style="opacity:.6;margin-right:3px">${o.v}</span>${o.l}</button>`;
+      }).join("")+`</div>`;
+    }
+
+    html += `<div style="background:#fff;border-radius:12px;padding:13px 15px;margin-bottom:10px;box-shadow:${shadow};border-left:4px solid ${ec}">
+      <div style="display:flex;align-items:flex-start;gap:10px">
+        <div style="background:${ec};color:#fff;border-radius:20px;min-width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;margin-top:1px">${p.id}</div>
+        <div style="flex:1">
+          <div style="font-size:11px;color:${ec};font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:2px">${p.esfera}</div>
+          <div style="font-size:13.5px;color:#1f2937;margin-bottom:9px;line-height:1.4">${prefijo}${p.texto}</div>
+          ${respHtml}
+        </div>
+      </div>
+    </div>`;
+  });
+
+  html += `<button onclick="setState({showResults:true})" ${pct<100?"disabled":""} style="width:100%;padding:13px;border-radius:12px;border:none;background:${pct===100?"linear-gradient(135deg,#10b981,#059669)":"#d1d5db"};color:${pct===100?"#fff":"#9ca3af"};font-size:15px;font-weight:700;margin-bottom:14px">
+    ${pct===100?"Ver Resultados →":"Completar todas las preguntas ("+pct+"%)"}</button>`;
+
+  // Modal resultados
+  if(state.showResults) {
+    const sev = v=>v<25?"Leve":v<50?"Moderado":v<75?"Severo":"Muy severo";
+    const bar = (label,value,color) => value===null?"" : `<div style="margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
+        <span style="font-weight:600">${label}</span>
+        <span style="font-weight:700;color:${color}">${value}/100 <span style="font-size:11px;color:#6b7280">(${sev(value)})</span></span>
+      </div>
+      <div style="background:#e5e7eb;border-radius:8px;height:8px"><div style="width:${value}%;background:${color};border-radius:8px;height:8px"></div></div>
+    </div>`;
+
+    const gColor = moxfqGlobal===null?"#6b7280":moxfqGlobal<33?"#16a34a":moxfqGlobal<66?"#d97706":"#dc2626";
+    const gBg = moxfqGlobal===null?"#f3f4f6":moxfqGlobal<33?"#dcfce7":moxfqGlobal<66?"#fef3c7":"#fee2e2";
+
+    html += `<div style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100;display:flex;align-items:center;justify-content:center;padding:16px">
+      <div style="background:#fff;border-radius:16px;padding:22px;max-width:480px;width:100%;max-height:92vh;overflow-y:auto">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <div>
+            <div style="font-weight:700;font-size:16px">Resultados MOxFQ</div>
+            ${state.pac.nombre?`<div style="font-size:12px;color:#6b7280">${state.pac.nombre} — RUT: ${state.pac.rut||"—"} — ${state.pac.fecha}</div>`:""}
+          </div>
+          <button onclick="setState({showResults:false})" style="background:none;border:none;font-size:20px;color:#6b7280">✕</button>
+        </div>
+        ${moxfqGlobal!==null?`<div style="background:${gBg};border-radius:12px;padding:13px 18px;margin-bottom:14px;text-align:center">
+          <div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:1px">Score MOxFQ Global</div>
+          <div style="font-size:44px;font-weight:800;color:${gColor}">${moxfqGlobal}</div>
+          <div style="font-size:12px;color:#374151">sobre 100 — Mayor puntaje = Mayor compromiso funcional</div>
+        </div>`:""}
+        ${bar("Deambulación / Pie",scores["Deambulación"],"#3b82f6")}
+        ${bar("Dolor",scores["Dolor"],"#ef4444")}
+        ${bar("Social",scores["Social"],"#8b5cf6")}
+        ${state.resp[17]!==undefined?`<div style="background:#f0fdf4;border-radius:10px;padding:9px 13px;margin-top:8px">
+          <div style="font-size:12px;font-weight:700;color:#10b981">Mejoría clínica (P17)</div>
+          <div style="font-size:14px;margin-top:3px">${opciones.mejoria.find(o=>o.v===state.resp[17])?.l} <span style="color:#6b7280">(${state.resp[17]}/5)</span></div>
+        </div>`:""}
+        ${state.eva!==null?`<div style="background:#fffbeb;border-radius:10px;padding:9px 13px;margin-top:8px">
+          <div style="font-size:12px;font-weight:700;color:#f59e0b">Escala EVA</div>
+          <div style="display:flex;align-items:center;gap:10px;margin-top:3px">
+            <div style="font-size:30px;font-weight:800;color:${state.eva<=3?"#16a34a":state.eva<=6?"#d97706":"#dc2626"}">${state.eva}</div>
+            <div style="font-size:12px;color:#374151">/10 — ${state.eva===0?"Sin dolor":state.eva<=3?"Leve":state.eva<=6?"Moderado":"Severo"}</div>
+          </div>
+        </div>`:""}
+        <div style="display:flex;gap:8px;margin-top:16px">
+          <button onclick="handleSave(false)" ${state.saving?"disabled":""} style="flex:1;padding:10px;border-radius:10px;border:none;background:#2563eb;color:#fff;font-size:13px;font-weight:700">
+            ${state.saving?'<span class="spinner"></span>':"💾 Guardar"}</button>
+          <button onclick="handleSave(true)" ${state.saving?"disabled":""} style="flex:1;padding:10px;border-radius:10px;border:none;background:#10b981;color:#fff;font-size:13px;font-weight:700">
+            ${state.saving?'<span class="spinner"></span>':"📋 Guardar y ver repo"}</button>
+        </div>
+        <button onclick="state.resp={};state.eva=null;state.showResults=false;state.pac={nombre:'',rut:'',edad:'',fecha:new Date().toISOString().slice(0,10),pie:'Derecho'};render()"
+          style="width:100%;margin-top:8px;padding:9px;border-radius:10px;border:1.5px solid #e5e7eb;background:#fff;color:#374151;font-size:13px;font-weight:600">↺ Nueva evaluación</button>
+        <div style="margin-top:10px;font-size:10px;color:#9ca3af;text-align:center">MOxFQ © Dawson et al. — Validado en español.</div>
+      </div>
+    </div>`;
+  }
+
+  html += "</div>";
+  app.innerHTML = html;
+}
+
+function renderRepo(app) {
+  const mejoriaLabels=["No tengo problema","Están mucho mejor","Ligeramente mejor","Sin cambios","Ligeramente peor","Están mucho peor"];
+  let html = `<div style="max-width:1000px;margin:0 auto;padding:16px 12px">
+    <div style="background:linear-gradient(135deg,#1e3a5f,#2563eb);border-radius:14px;padding:16px 20px;margin-bottom:18px;color:#fff;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+      <div>
+        <div style="font-size:11px;opacity:.7;letter-spacing:2px;text-transform:uppercase">Trauma Ñuble SpA</div>
+        <div style="font-size:17px;font-weight:700">Repositorio MOxFQ</div>
+        <div style="font-size:12px;opacity:.8">${state.loading?"Cargando...":state.registros.length+" evaluaciones en Google Sheets"}</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button onclick="loadRegistros()" style="padding:8px 14px;border-radius:8px;border:none;background:rgba(255,255,255,.2);color:#fff;font-weight:600;font-size:12px">${state.loading?'<span class="spinner"></span>':"↺ Actualizar"}</button>
+        ${state.registros.length>0?`<button onclick="exportCSV(state.registros)" style="padding:8px 14px;border-radius:8px;border:none;background:#10b981;color:#fff;font-weight:700;font-size:12px">⬇ CSV</button>`:""}
+        <button onclick="setState({view:'form'})" style="padding:8px 14px;border-radius:8px;border:none;background:rgba(255,255,255,.9);color:#1e3a5f;font-weight:700;font-size:12px">＋ Nueva evaluación</button>
+      </div>
+    </div>`;
+
+  if(state.error) html+=`<div style="background:#fee2e2;color:#b91c1c;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:13px">${state.error}</div>`;
+
+  if(state.loading) {
+    html+=`<div style="text-align:center;padding:40px;color:#6b7280"><span class="spinner"></span><div style="margin-top:10px;font-size:14px">Cargando desde Google Sheets...</div></div>`;
+  } else if(!state.registros.length) {
+    html+=`<div style="text-align:center;padding:40px;color:#9ca3af;font-size:14px">No hay registros aún.</div>`;
+  } else {
+    html+=`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08);font-size:13px">
+      <thead><tr style="background:#1e3a5f;color:#fff">
+        ${["Fecha","Nombre","RUT","Edad","Pie","Deambulación","Dolor","Social","Global","EVA","Mejoría",""].map(h=>`<th style="padding:10px 12px;text-align:left;font-weight:600;white-space:nowrap">${h}</th>`).join("")}
+      </tr></thead><tbody>`;
+    state.registros.forEach((r,i)=>{
+      const g=Number(r["Score Global"]);
+      const gColor=!r["Score Global"]?"#6b7280":g<33?"#16a34a":g<66?"#d97706":"#dc2626";
+      const gBg=!r["Score Global"]?"#f3f4f6":g<33?"#dcfce7":g<66?"#fef3c7":"#fee2e2";
+      const ev=r["EVA"]!==""?Number(r["EVA"]):null;
+      const rid=r["ID"];
+      html+=`<tr style="background:${i%2===0?"#f9fafb":"#fff"};border-bottom:1px solid #e5e7eb">
+        <td style="padding:9px 12px;white-space:nowrap">${r["Fecha"]}</td>
+        <td style="padding:9px 12px;font-weight:600">${r["Nombre"]||"—"}</td>
+        <td style="padding:9px 12px;font-family:monospace;font-size:12px">${r["RUT"]||"—"}</td>
+        <td style="padding:9px 12px">${r["Edad"]||"—"}</td>
+        <td style="padding:9px 12px">${r["Pie"]||"—"}</td>
+        <td style="padding:9px 12px;text-align:center"><span style="background:#dbeafe;color:#1d4ed8;border-radius:20px;padding:2px 8px;font-weight:700">${r["Score Deambulación"]||"—"}</span></td>
+        <td style="padding:9px 12px;text-align:center"><span style="background:#fee2e2;color:#b91c1c;border-radius:20px;padding:2px 8px;font-weight:700">${r["Score Dolor"]||"—"}</span></td>
+        <td style="padding:9px 12px;text-align:center"><span style="background:#ede9fe;color:#6d28d9;border-radius:20px;padding:2px 8px;font-weight:700">${r["Score Social"]||"—"}</span></td>
+        <td style="padding:9px 12px;text-align:center"><span style="background:${gBg};color:${gColor};border-radius:20px;padding:2px 10px;font-weight:800">${r["Score Global"]||"—"}</span></td>
+        <td style="padding:9px 12px;text-align:center;font-weight:700;color:${ev===null?"#9ca3af":ev<=3?"#16a34a":ev<=6?"#d97706":"#dc2626"}">${ev!==null?ev:"—"}</td>
+        <td style="padding:9px 12px;font-size:12px;color:#6b7280;white-space:nowrap">${r["P17 Mejoría"]||"—"}</td>
+        <td style="padding:9px 12px">${state.deleteConfirm===rid
+          ?`<button onclick="handleDelete('${rid}')" style="background:#ef4444;color:#fff;border:none;border-radius:6px;padding:3px 8px;font-size:11px;margin-right:4px">Sí</button><button onclick="setState({deleteConfirm:null})" style="background:#e5e7eb;color:#374151;border:none;border-radius:6px;padding:3px 8px;font-size:11px">No</button>`
+          :`<button onclick="setState({deleteConfirm:'${rid}'})" style="background:none;border:none;font-size:15px;color:#9ca3af">🗑</button>`
+        }</td>
+      </tr>`;
+    });
+    html+=`</tbody></table></div>`;
+  }
+  html+=`<div style="margin-top:10px;font-size:11px;color:#9ca3af;text-align:center">Datos almacenados en Google Sheets · Accesible desde cualquier dispositivo</div></div>`;
+  app.innerHTML = html;
+}
+
+// Init
+render();
+</script>
+</body>
+</html>
