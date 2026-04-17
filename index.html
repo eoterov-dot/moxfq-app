@@ -18,6 +18,7 @@ input,select{outline:none}
 <div id="app"></div>
 <div class="toast" id="toast"></div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
 const API = "https://script.google.com/macros/s/AKfycbx2GH2s_u-f5V2XF9e9CwsN73IKdqLbugzz22QXZmHB-fufNX4Q4t2HGTIbOEGIUaWe0Q/exec";
 
@@ -95,13 +96,121 @@ function calcScore(r) {
 
 function setState(patch) { Object.assign(state, patch); render(); }
 
-function exportCSV(registros) {
-  if(!registros.length) return;
-  const keys=Object.keys(registros[0]);
-  const csv=[keys,...registros.map(r=>keys.map(k=>`"${String(r[k]??"").replace(/"/g,'""')}"`))].map(r=>r.join(",")).join("\n");
-  const a=document.createElement("a");
-  a.href=URL.createObjectURL(new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8;"}));
-  a.download="MOxFQ_"+new Date().toISOString().slice(0,10)+".csv"; a.click();
+function exportXLSX(registros) {
+  if (!registros.length) return;
+
+  const wb = XLSX.utils.book_new();
+
+  // ── Hoja 1: Resumen por paciente ──────────────────────────
+  const resumenHeaders = [
+    "Fecha","Nombre","RUT","Edad","Pie afectado",
+    "ESFERA DOLOR (0-100)","ESFERA PIE / DEAMBULACIÓN (0-100)","ESFERA SOCIAL (0-100)",
+    "MOxFQ TOTAL (0-100)","EVA (0-10)","P17 Mejoría clínica"
+  ];
+  const resumenRows = registros.map(r => [
+    r["Fecha"], r["Nombre"], r["RUT"], r["Edad"], r["Pie"],
+    r["Score Dolor"]!==undefined?Number(r["Score Dolor"]):"",
+    r["Score Deambulación"]!==undefined?Number(r["Score Deambulación"]):"",
+    r["Score Social"]!==undefined?Number(r["Score Social"]):"",
+    r["Score Global"]!==undefined?Number(r["Score Global"]):"",
+    r["EVA"]!==undefined&&r["EVA"]!==""?Number(r["EVA"]):"",
+    r["P17 Mejoría"]||""
+  ]);
+
+  const wsResumen = XLSX.utils.aoa_to_sheet([resumenHeaders, ...resumenRows]);
+
+  // Anchos de columna
+  wsResumen["!cols"] = [
+    {wch:12},{wch:24},{wch:14},{wch:6},{wch:12},
+    {wch:22},{wch:28},{wch:22},
+    {wch:20},{wch:10},{wch:22}
+  ];
+
+  // Estilo de encabezados (color por esfera)
+  const headerColors = [
+    "4A4A4A","4A4A4A","4A4A4A","4A4A4A","4A4A4A",
+    "EF4444","3B82F6","8B5CF6",
+    "1E3A5F","F59E0B","10B981"
+  ];
+  resumenHeaders.forEach((_, i) => {
+    const cell = XLSX.utils.encode_cell({r:0, c:i});
+    if (!wsResumen[cell]) return;
+    wsResumen[cell].s = {
+      fill: { fgColor: { rgb: headerColors[i] } },
+      font: { color: { rgb: "FFFFFF" }, bold: true },
+      alignment: { horizontal: "center", wrapText: true }
+    };
+  });
+
+  XLSX.utils.book_append_sheet(wb, wsResumen, "Resumen");
+
+  // ── Hoja 2: Respuestas detalladas ─────────────────────────
+  const detHeaders = [
+    "Fecha","Nombre","RUT",
+    // ESFERA DOLOR
+    "P1-Dolor pie/tobillo","P5-Para descansar","P8-Bus/coche por dolor",
+    "P11-Dolor fin del día","P15-Intensidad dolor","P16-Dolor nocturno",
+    "SUBTOTAL DOLOR",
+    // ESFERA PIE
+    "P2-Evita largas distancias","P3-Cambia manera caminar","P4-Camina lento",
+    "P6-Evita superficies","P7-Evita estar de pie","P12-Dolor punzante","P13-Impide trabajo",
+    "SUBTOTAL PIE",
+    // ESFERA SOCIAL
+    "P9-Acomplejado pie","P10-Acomplejado calzado","P14-Sin actividades sociales",
+    "SUBTOTAL SOCIAL",
+    // RESULTADOS
+    "MOxFQ TOTAL","EVA","P17 Mejoría"
+  ];
+
+  const esferas = {
+    DOLOR:[1,5,8,11,15,16],
+    PIE:[2,3,4,6,7,12,13],
+    SOCIAL:[9,10,14]
+  };
+
+  const detRows = registros.map(r => {
+    const row = [r["Fecha"], r["Nombre"], r["RUT"]];
+    // Dolor
+    [1,5,8,11,15,16].forEach(i => row.push(r[`P${i}`]!==""&&r[`P${i}`]!==undefined?Number(r[`P${i}`]):""));
+    row.push(r["Score Dolor"]!==""?Number(r["Score Dolor"]):"");
+    // Pie
+    [2,3,4,6,7,12,13].forEach(i => row.push(r[`P${i}`]!==""&&r[`P${i}`]!==undefined?Number(r[`P${i}`]):""));
+    row.push(r["Score Deambulación"]!==""?Number(r["Score Deambulación"]):"");
+    // Social
+    [9,10,14].forEach(i => row.push(r[`P${i}`]!==""&&r[`P${i}`]!==undefined?Number(r[`P${i}`]):""));
+    row.push(r["Score Social"]!==""?Number(r["Score Social"]):"");
+    // Resultados
+    row.push(r["Score Global"]!==""?Number(r["Score Global"]):"");
+    row.push(r["EVA"]!==""&&r["EVA"]!==undefined?Number(r["EVA"]):"");
+    row.push(r["P17 Mejoría"]||"");
+    return row;
+  });
+
+  const wsDet = XLSX.utils.aoa_to_sheet([detHeaders, ...detRows]);
+  wsDet["!cols"] = detHeaders.map((_,i) => ({wch: i<3?16:i===detHeaders.length-1?22:14}));
+
+  // Colores por esfera en encabezados detalle
+  const detColors = [
+    "4A4A4A","4A4A4A","4A4A4A",
+    "FCA5A5","FCA5A5","FCA5A5","FCA5A5","FCA5A5","FCA5A5","EF4444",
+    "93C5FD","93C5FD","93C5FD","93C5FD","93C5FD","93C5FD","93C5FD","3B82F6",
+    "C4B5FD","C4B5FD","C4B5FD","8B5CF6",
+    "1E3A5F","F59E0B","10B981"
+  ];
+  detHeaders.forEach((_, i) => {
+    const cell = XLSX.utils.encode_cell({r:0, c:i});
+    if (!wsDet[cell]) return;
+    wsDet[cell].s = {
+      fill: { fgColor: { rgb: detColors[i] } },
+      font: { color: { rgb: i<3||detColors[i].length<6?"000000":"FFFFFF" }, bold: true },
+      alignment: { horizontal: "center", wrapText: true }
+    };
+  });
+
+  XLSX.utils.book_append_sheet(wb, wsDet, "Respuestas detalladas");
+
+  // Descargar
+  XLSX.writeFile(wb, "MOxFQ_"+new Date().toISOString().slice(0,10)+".xlsx");
 }
 
 async function loadRegistros() {
@@ -300,7 +409,7 @@ function renderRepo(app) {
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button onclick="loadRegistros()" style="padding:8px 14px;border-radius:8px;border:none;background:rgba(255,255,255,.2);color:#fff;font-weight:600;font-size:12px">${state.loading?'<span class="spinner"></span>':"↺ Actualizar"}</button>
-        ${state.registros.length>0?`<button onclick="exportCSV(state.registros)" style="padding:8px 14px;border-radius:8px;border:none;background:#10b981;color:#fff;font-weight:700;font-size:12px">⬇ CSV</button>`:""}
+        ${state.registros.length>0?`<button onclick="exportXLSX(state.registros)" style="padding:8px 14px;border-radius:8px;border:none;background:#10b981;color:#fff;font-weight:700;font-size:12px">⬇ Excel (.xlsx)</button>`:""}
         <button onclick="setState({view:'form'})" style="padding:8px 14px;border-radius:8px;border:none;background:rgba(255,255,255,.9);color:#1e3a5f;font-weight:700;font-size:12px">＋ Nueva evaluación</button>
       </div>
     </div>`;
